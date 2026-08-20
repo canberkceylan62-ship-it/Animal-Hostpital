@@ -1,0 +1,247 @@
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local CollectionService = game:GetService("CollectionService")
+
+local localPlayer = Players.LocalPlayer
+local playerGui = localPlayer:WaitForChild("PlayerGui")
+
+-- --------------------------------------------------------------------
+-- CONFIGURATION
+-- --------------------------------------------------------------------
+local SCAN_KEY = Enum.KeyCode.H               -- Keyboard key to trigger scan
+local SCAN_RADIUS = 1000                      -- Maximum distance in studs to scan NPCs
+local COLOR_ANOMALY = Color3.fromRGB(255, 60, 60)      -- Red
+local COLOR_NORMAL = Color3.fromRGB(60, 255, 120)      -- Green
+local HIGHLIGHT_DURATION = 5                  -- Seconds highlight stays active
+
+-- Function to check if the camera feed or viewport is showing a Void Body / Shadow Anomaly
+local function isCCTVVoidAnomaly(npcModel)
+    -- 1. Check for dedicated CCTV viewport models or camera clones
+    for _, gui in ipairs(playerGui:GetDescendants()) do
+        if gui:IsA("ViewportFrame") and gui.Visible then
+            for _, clone in ipairs(gui:GetDescendants()) do
+                if clone:IsA("BasePart") and clone.Transparency < 1 then
+                    -- If the camera view shows pitch-black parts while standing at desk
+                    if clone.Color.R < 0.05 and clone.Color.G < 0.05 and clone.Color.B < 0.05 then
+                        return true
+                    end
+                end
+            end
+        end
+    end
+
+    -- 2. Check for hidden black overlay meshes/parts welded to NPC for camera views
+    for _, part in ipairs(npcModel:GetDescendants()) do
+        if part:IsA("BasePart") or part:IsA("SpecialMesh") then
+            local pColor = part:IsA("BasePart") and part.Color or (part:IsA("SpecialMesh") and part.VertexColor)
+            if pColor then
+                if (part.Name:lower():find("cctv") or part.Name:lower():find("shadow") or part.Name:lower():find("void")) then
+                    return true
+                end
+            end
+        end
+    end
+
+    return false
+end
+
+-- Comprehensive Anomaly Checker (Physical, CCTV, and Internal Flags)
+local function checkIsAnomaly(npcModel)
+    -- Check 1: Camera Feed / Void Body Anomaly
+    if isCCTVVoidAnomaly(npcModel) then
+        return true
+    end
+
+    -- Check 2: CollectionService Tags
+    for _, tag in ipairs(CollectionService:GetTags(npcModel)) do
+        local tagLower = tag:lower()
+        if tagLower:find("anomaly") or tagLower:find("fake") or tagLower:find("skinwalker") or tagLower:find("void") then
+            return true
+        end
+    end
+
+    -- Check 3: Attributes across Model & Children
+    for _, obj in ipairs({npcModel, unpack(npcModel:GetDescendants())}) do
+        if obj:IsA("Instance") then
+            for attrName, attrVal in pairs(obj:GetAttributes()) do
+                local nameLower = attrName:lower()
+                if nameLower:find("anomaly") or nameLower:find("fake") or nameLower:find("void") or nameLower:find("shadow") then
+                    if attrVal == true or tostring(attrVal):lower() == "true" then return true end
+                end
+                if nameLower:find("real") or nameLower:find("normal") or nameLower:find("human") then
+                    if attrVal == false or tostring(attrVal):lower() == "false" then return true end
+                end
+            end
+        end
+    end
+
+    -- Check 4: Value Objects (BoolValue, StringValue)
+    for _, descendant in ipairs(npcModel:GetDescendants()) do
+        if descendant:IsA("ValueBase") then
+            local nameLower = descendant.Name:lower()
+            local valStr = tostring(descendant.Value):lower()
+            if nameLower:find("anomaly") or nameLower:find("fake") or nameLower:find("isvoid") then
+                if descendant:IsA("BoolValue") and descendant.Value == true then return true end
+                if valStr == "true" or valStr:find("anomaly") then return true end
+            end
+            if nameLower:find("real") and descendant:IsA("BoolValue") and descendant.Value == false then
+                return true
+            end
+        end
+    end
+
+    -- Check 5: Model / Instance Name
+    local modelName = npcModel.Name:lower()
+    if modelName:find("anomaly") or modelName:find("fake") or modelName:find("skinwalker") or modelName:find("shadow") then
+        return true
+    end
+
+    return false
+end
+
+-- --------------------------------------------------------------------
+-- UI CREATION (Bottom-Left Corner)
+-- --------------------------------------------------------------------
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "AnomalyDetectorGui"
+screenGui.ResetOnSpawn = false
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+screenGui.Parent = playerGui
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "MainFrame"
+mainFrame.AnchorPoint = Vector2.new(0, 1)
+mainFrame.Position = UDim2.new(0.02, 0, 0.95, 0)
+mainFrame.Size = UDim2.new(0.2, 0, 0.15, 0)
+mainFrame.BackgroundColor3 = Color3.fromRGB(25, 27, 35)
+mainFrame.BorderSizePixel = 0
+mainFrame.Parent = screenGui
+
+local uiCorner = Instance.new("UICorner")
+uiCorner.CornerRadius = UDim.new(0.08, 0)
+uiCorner.Parent = mainFrame
+
+local uiStroke = Instance.new("UIStroke")
+uiStroke.Color = Color3.fromRGB(60, 65, 80)
+uiStroke.Thickness = 2
+uiStroke.Parent = mainFrame
+
+local aspectConstraint = Instance.new("UIAspectRatioConstraint")
+aspectConstraint.AspectRatio = 1.8
+aspectConstraint.AspectType = Enum.AspectType.FitWithinMaxSize
+aspectConstraint.DominantAxis = Enum.DominantAxis.Width
+aspectConstraint.Parent = mainFrame
+
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Name = "Title"
+titleLabel.Size = UDim2.new(1, 0, 0.3, 0)
+titleLabel.Position = UDim2.new(0, 0, 0.05, 0)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Font = Enum.Font.GothamBold
+titleLabel.Text = "ANOMALY SCANNER"
+titleLabel.TextColor3 = Color3.fromRGB(240, 240, 240)
+titleLabel.TextScaled = true
+titleLabel.Parent = mainFrame
+
+local titleConstraint = Instance.new("UITextSizeConstraint")
+titleConstraint.MaxTextSize = 18
+titleConstraint.MinTextSize = 10
+titleConstraint.Parent = titleLabel
+
+local scanButton = Instance.new("TextButton")
+scanButton.Name = "ScanButton"
+scanButton.AnchorPoint = Vector2.new(0.5, 0.5)
+scanButton.Position = UDim2.new(0.5, 0, 0.65, 0)
+scanButton.Size = UDim2.new(0.85, 0, 0.4, 0)
+scanButton.BackgroundColor3 = Color3.fromRGB(45, 120, 240)
+scanButton.Font = Enum.Font.GothamBold
+scanButton.Text = "SCAN [" .. SCAN_KEY.Name .. "]"
+scanButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+scanButton.TextScaled = true
+scanButton.Modal = true
+scanButton.Parent = mainFrame
+
+local buttonCorner = Instance.new("UICorner")
+buttonCorner.CornerRadius = UDim.new(0.2, 0)
+buttonCorner.Parent = scanButton
+
+local buttonTextConstraint = Instance.new("UITextSizeConstraint")
+buttonTextConstraint.MaxTextSize = 16
+buttonTextConstraint.MinTextSize = 10
+buttonTextConstraint.Parent = scanButton
+
+-- --------------------------------------------------------------------
+-- SCANNER LOGIC
+-- --------------------------------------------------------------------
+local function applyHighlight(model, isAnomaly)
+    local existing = model:FindFirstChild("AnomalyScanHighlight")
+    if existing then existing:Destroy() end
+
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "AnomalyScanHighlight"
+    highlight.Adornee = model
+    highlight.FillTransparency = 0.5
+    highlight.OutlineTransparency = 0
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    
+    if isAnomaly then
+        highlight.FillColor = COLOR_ANOMALY
+        highlight.OutlineColor = COLOR_ANOMALY
+    else
+        highlight.FillColor = COLOR_NORMAL
+        highlight.OutlineColor = COLOR_NORMAL
+    end
+
+    highlight.Parent = model
+
+    task.delay(HIGHLIGHT_DURATION, function()
+        if highlight and highlight.Parent then
+            local tween = TweenService:Create(highlight, TweenInfo.new(1), {FillTransparency = 1, OutlineTransparency = 1})
+            tween:Play()
+            tween.Completed:Connect(function()
+                highlight:Destroy()
+            end)
+        end
+    end)
+end
+
+local function runScan()
+    local character = localPlayer.Character
+    if not character or not character:FindFirstChild("HumanoidRootPart") then return end
+
+    local origin = character.HumanoidRootPart.Position
+
+    for _, object in ipairs(workspace:GetDescendants()) do
+        if object:IsA("Model") and object:FindFirstChildOfClass("Humanoid") and object ~= character then
+            local primaryPart = object.PrimaryPart or object:FindFirstChild("HumanoidRootPart") or object:FindFirstChild("Head") or object:FindFirstChildWhichIsA("BasePart")
+            if primaryPart then
+                local distance = (primaryPart.Position - origin).Magnitude
+                if distance <= SCAN_RADIUS then
+                    local isAnomaly = checkIsAnomaly(object)
+                    applyHighlight(object, isAnomaly)
+                end
+            end
+        end
+    end
+end
+
+scanButton.MouseButton1Click:Connect(runScan)
+
+-- --------------------------------------------------------------------
+-- KEYBOARD INPUTS
+-- --------------------------------------------------------------------
+local isGuiVisible = true
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    
+    if input.KeyCode == SCAN_KEY then
+        runScan()
+    end
+
+    if input.KeyCode == Enum.KeyCode.Tab then
+        isGuiVisible = not isGuiVisible
+        mainFrame.Visible = isGuiVisible
+    end
+end)
